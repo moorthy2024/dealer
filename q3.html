@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Dealer Map Accordion</title>
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <style>
+    * {
+      box-sizing: border-box;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+    body {
+      margin: 0;
+    }
+    .top-nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #333;
+      color: white;
+      padding: 10px 20px;
+    }
+    .top-nav .left,
+    .top-nav .center,
+    .top-nav .right {
+      display: flex;
+      align-items: center;
+      gap: 15px;
+    }
+    .top-nav a {
+      color: white;
+      text-decoration: none;
+    }
+    .top-nav input[type="text"] {
+      padding: 5px;
+    }
+    .main {
+      display: flex;
+      height: calc(100vh - 50px);
+    }
+    .left-panel {
+      width: 25%;
+      padding: 10px;
+      overflow-y: auto;
+      border-right: 1px solid #ccc;
+    }
+    .right-panel {
+      width: 75%;
+      display: none;
+    }
+    #map {
+      height: 100%;
+      width: 100%;
+    }
+    .tabs {
+      display: flex;
+      margin: 10px 0;
+      gap: 5px;
+    }
+    .tab {
+      padding: 6px 10px;
+      background: #ddd;
+      cursor: pointer;
+      border-radius: 3px;
+      user-select: none;
+    }
+    .tab.active {
+      background: #aaa;
+      font-weight: bold;
+    }
+    .accordion-item {
+      border: 1px solid #ccc;
+      margin-bottom: 10px;
+      border-radius: 5px;
+    }
+    .accordion-header {
+      padding: 10px;
+      background-color: #f0f0f0;
+      cursor: pointer;
+      position: relative;
+      user-select: none;
+    }
+    .accordion-header::after {
+      content: "▶";
+      position: absolute;
+      right: 15px;
+      transition: transform 0.2s;
+    }
+    .accordion-header.expanded::after {
+      transform: rotate(90deg);
+    }
+    .accordion-content {
+      display: none;
+      padding: 10px;
+      background-color: #fff;
+    }
+    .search-controls {
+      margin-bottom: 10px;
+    }
+    .search-controls input[type="range"] {
+      width: 100%;
+    }
+  </style>
+</head>
+<body>
+
+<div class="top-nav">
+  <div class="left">
+    <a href="#">Home</a>
+    <a href="#">Services</a>
+    <a href="#">Contact</a>
+  </div>
+  <div class="center">
+    <strong>LOGO</strong>
+  </div>
+  <div class="right">
+    <a href="#">Help</a>
+    <input type="text" placeholder="Search..." />
+  </div>
+</div>
+
+<div class="main">
+  <div class="left-panel">
+    <div class="search-controls">
+      <input type="text" id="dealer-search" placeholder="Search dealers..." />
+      <input type="range" min="1" max="100" value="50" />
+    </div>
+
+    <div class="tabs" id="tab-container"></div>
+    <div id="content-area"></div>
+  </div>
+
+  <div class="right-panel" id="map-panel">
+    <div id="map"></div>
+  </div>
+</div>
+
+<script>
+  const data = [
+    { dealer: 'Auto World', address: '123 Main St, NY', phone: '555-1234', type: ['services'], position: { lat: 40.7128, lng: -74.0060 } },
+    { dealer: 'Car Galaxy', address: '456 Elm St, LA', phone: '555-5678', type: ['sales'], position: { lat: 34.0522, lng: -118.2437 } },
+    { dealer: 'Drive Smart', address: '789 Oak St, TX', phone: '555-2468', type: ['sales', 'services'], position: { lat: 29.7604, lng: -95.3698 } },
+    { dealer: 'Speed Motors', address: '101 Pine St, FL', phone: '555-9999', type: ['sales'], position: { lat: 25.7617, lng: -80.1918 } },
+    { dealer: 'City Garage', address: '202 Maple St, IL', phone: '555-8888', type: ['services'], position: { lat: 41.8781, lng: -87.6298 } },
+    { dealer: 'ProFix Autos', address: '404 Birch St, OR', phone: '555-6666', type: ['services'], position: { lat: 45.5051, lng: -122.6750 } },
+    { dealer: 'Green Garage', address: '606 Ash St, CO', phone: '555-4444', type: ['sales', 'services'], position: { lat: 39.7392, lng: -104.9903 } },
+    { dealer: 'Eco Motors', address: '707 Palm St, AZ', phone: '555-3333', type: ['sales'], position: { lat: 33.4484, lng: -112.0740 } }
+  ];
+
+  const countByType = {
+    sales: data.filter(d => d.type.includes('sales')).length,
+    services: data.filter(d => d.type.includes('services')).length,
+    both: data.filter(d => d.type.includes('sales') && d.type.includes('services')).length
+  };
+
+  let map;
+  let mapInitialized = false;
+  let currentMarker;
+
+  function renderTabs() {
+    const tabContainer = $('#tab-container');
+    tabContainer.empty();
+    const tabs = [
+      { label: `Services (${countByType.services})`, type: 'services' },
+      { label: `Sales (${countByType.sales})`, type: 'sales' },
+      { label: `Both (${countByType.both})`, type: 'both' }
+    ];
+    tabs.forEach(tab => {
+      const el = $(`<div class="tab" data-type="${tab.type}">${tab.label}</div>`);
+      tabContainer.append(el);
+    });
+  }
+
+  function renderAccordion(dealers) {
+    const content = $('#content-area');
+    content.empty();
+
+    if (dealers.length === 0) {
+      content.append('<p>No dealers found.</p>');
+      $('#map-panel').hide();
+      return;
+    }
+
+    dealers.forEach(d => {
+      const item = $(`
+        <div class="accordion-item">
+          <div class="accordion-header" data-lat="${d.position.lat}" data-lng="${d.position.lng}">${d.dealer}</div>
+          <div class="accordion-content">
+            <p><strong>Address:</strong> ${d.address}</p>
+            <p><strong>Phone:</strong> ${d.phone}</p>
+          </div>
+        </div>
+      `);
+      content.append(item);
+    });
+
+    const firstHeader = $('.accordion-header').first();
+    firstHeader.addClass('expanded');
+    firstHeader.next('.accordion-content').show();
+
+    $('#map-panel').show();
+
+    const lat = parseFloat(firstHeader.data('lat'));
+    const lng = parseFloat(firstHeader.data('lng'));
+    setTimeout(() => {
+      if (!mapInitialized) {
+        map = L.map('map').setView([lat, lng], 13);
+        mapInitialized = true;
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+      } else {
+        map.setView([lat, lng], 13);
+      }
+      if (currentMarker) {
+        map.removeLayer(currentMarker);
+      }
+      currentMarker = L.marker([lat, lng]).addTo(map).bindPopup(firstHeader.text()).openPopup();
+    }, 200);
+
+    $('.accordion-header').on('click', function () {
+      const header = $(this);
+      const contentDiv = header.next('.accordion-content');
+      const lat = parseFloat(header.data('lat'));
+      const lng = parseFloat(header.data('lng'));
+      const isOpen = header.hasClass('expanded');
+
+      $('.accordion-header').removeClass('expanded');
+      $('.accordion-content').slideUp();
+
+      if (!isOpen) {
+        header.addClass('expanded');
+        contentDiv.slideDown();
+
+        $('#map-panel').show();
+
+        setTimeout(() => {
+          if (!mapInitialized) {
+            map = L.map('map').setView([lat, lng], 13);
+            mapInitialized = true;
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+              attribution: '© OpenStreetMap contributors'
+            }).addTo(map);
+          } else {
+            map.setView([lat, lng], 13);
+          }
+          if (currentMarker) {
+            map.removeLayer(currentMarker);
+          }
+          currentMarker = L.marker([lat, lng]).addTo(map).bindPopup(header.text()).openPopup();
+        }, 200);
+      } else {
+        $('#map-panel').hide();
+        if (currentMarker) {
+          map.removeLayer(currentMarker);
+          currentMarker = null;
+        }
+      }
+    });
+  }
+
+  function handleTabClick(type) {
+    $('.tab').removeClass('active');
+    $(`.tab[data-type=${type}]`).addClass('active');
+
+    let filtered = [];
+    if (type === 'sales') {
+      filtered = data.filter(d => d.type.includes('sales'));
+    } else if (type === 'services') {
+      filtered = data.filter(d => d.type.includes('services'));
+    } else if (type === 'both') {
+      filtered = data.filter(d => d.type.includes('sales') && d.type.includes('services'));
+    }
+
+    renderAccordion(filtered);
+  }
+
+  $(document).ready(function () {
+    renderTabs();
+
+    const firstTabType = $('.tab').first().data('type');
+    handleTabClick(firstTabType);
+
+    $(document).on('click', '.tab', function () {
+      const type = $(this).data('type');
+      handleTabClick(type);
+    });
+
+    $('#dealer-search').on('input', function () {
+      const searchText = $(this).val().toLowerCase();
+      const activeTab = $('.tab.active').data('type') || 'services';
+
+      let filtered = data;
+      if (activeTab === 'sales') {
+        filtered = data.filter(d => d.type.includes('sales'));
+      } else if (activeTab === 'services') {
+        filtered = data.filter(d => d.type.includes('services'));
+      } else if (activeTab === 'both') {
+        filtered = data.filter(d => d.type.includes('sales') && d.type.includes('services'));
+      }
+
+      filtered = filtered.filter(d => d.dealer.toLowerCase().includes(searchText));
+      renderAccordion(filtered);
+    });
+  });
+</script>
+
+</body>
+</html>
